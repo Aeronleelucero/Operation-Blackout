@@ -26,6 +26,7 @@
   const keys = Object.create(null)
   let W=960,H=540,depth=new Float32Array(W),running=false,paused=false,last=0,mouseDown=false,adsDown=false,fallbackLook=true
   const fallbackAim={x:0,y:0}
+  let sensitivity=1.6,lastCursorX=null,lastCursorY=null
   let audio=null,remaining=90,score=0,shots=0,hits=0,headshots=0,kills=0
   let ammo=30,reserve=90,health=100,armor=50,shotCooldown=0,reloadT=0,reloadStage=0,muzzle=0
   let weaponKick=0,weaponSwayX=0,weaponSwayY=0,bobPhase=0,ads=0,sprintBlend=0,crouchBlend=0,landKick=0
@@ -43,7 +44,7 @@
   function noiseSound(dur=.07,gain=.06){try{audio ||= new (window.AudioContext||window.webkitAudioContext)();const len=audio.sampleRate*dur,b=audio.createBuffer(1,len,audio.sampleRate),d=b.getChannelData(0);for(let i=0;i<len;i++)d[i]=(Math.random()*2-1)*(1-i/len);const s=audio.createBufferSource(),g=audio.createGain();s.buffer=b;g.gain.value=gain;s.connect(g).connect(audio.destination);s.start()}catch{}}
   function spawnEnemies(){enemies=SPAWNS.map((p,i)=>({id:i,x:p[0],y:p[1],hp:i===5?140:100,alive:true,cooldown:1+Math.random(),alert:0,strafe:Math.random()<.5?-1:1,flash:0,hit:0,lastSeen:0}))}
   function reset(){Object.assign(player,{x:1.55,y:1.55,dir:.65,pitch:0,z:0,vz:0,onGround:true,step:0});remaining=90;score=shots=hits=headshots=kills=0;ammo=30;reserve=90;health=100;armor=50;shotCooldown=reloadT=muzzle=0;weaponKick=weaponSwayX=weaponSwayY=bobPhase=ads=sprintBlend=crouchBlend=landKick=0;particles=[];decals=[];spawnEnemies();ui.objective.textContent='ELIMINATE HOSTILES';updateUI()}
-  function inputHint(){if(reloadT<=0)ui.interaction.textContent=fallbackLook?'MOUSE LOOK FALLBACK // MOVE CURSOR TO EDGES':''}
+  function inputHint(){if(reloadT<=0)ui.interaction.textContent=fallbackLook?'MOUSE LOOK FALLBACK // FLICK OR MOVE TO EDGES':''}
   function requestLook(){fallbackLook=true;inputHint();try{const request=canvas.requestPointerLock?.();request?.catch?.(()=>{fallbackLook=true;inputHint()})}catch{fallbackLook=true;inputHint()}}
   function startRound(){reset();running=true;paused=false;ui.start.classList.add('hidden');ui.result.classList.add('hidden');ui.pause.classList.add('hidden');ui.hud.hidden=false;last=performance.now();requestLook();sound(110,.18,'sawtooth',.05,180);requestAnimationFrame(loop)}
   function pauseGame(){if(!running)return;paused=true;mouseDown=false;ui.pause.classList.remove('hidden')}
@@ -68,7 +69,7 @@
   function damagePlayer(raw){let d=raw;if(armor>0){const absorbed=Math.min(armor,d*.55);armor-=absorbed;d-=absorbed}health=Math.max(0,health-d);ui.damage.classList.add('active');setTimeout(()=>ui.damage.classList.remove('active'),140);sound(48,.16,'sawtooth',.06,-20);if(health<=0)setTimeout(()=>finish(false),250);updateUI()}
   function updatePlayer(dt){
     const forward=(keys.KeyW?1:0)-(keys.KeyS?1:0),side=(keys.KeyD?1:0)-(keys.KeyA?1:0),moving=forward||side,crouch=keys.ControlLeft||keys.ControlRight||keys.KeyC,sprinting=keys.ShiftLeft&&forward>0&&!crouch&&reloadT<=0
-    if(fallbackLook){const ax=Math.abs(fallbackAim.x)>.08?fallbackAim.x:0,ay=Math.abs(fallbackAim.y)>.10?fallbackAim.y:0;player.dir+=ax*dt*2.45;player.pitch=Math.max(-.30,Math.min(.30,player.pitch+ay*dt*.72))}
+    if(fallbackLook){const ax=Math.abs(fallbackAim.x)>.72?fallbackAim.x:0,ay=Math.abs(fallbackAim.y)>.78?fallbackAim.y:0;player.dir+=ax*dt*1.2*sensitivity;player.pitch=Math.max(-.30,Math.min(.30,player.pitch+ay*dt*.35*sensitivity))}
     if(keys.ArrowLeft)player.dir-=dt*1.8;if(keys.ArrowRight)player.dir+=dt*1.8;if(keys.ArrowUp)player.pitch=Math.max(-.30,player.pitch-dt*.6);if(keys.ArrowDown)player.pitch=Math.min(.30,player.pitch+dt*.6)
     crouchBlend+=(Number(!!crouch)-crouchBlend)*Math.min(1,dt*10);sprintBlend+=(Number(!!sprinting)-sprintBlend)*Math.min(1,dt*8);ads+=(Number(adsDown&&!sprinting&&reloadT<=0)-ads)*Math.min(1,dt*12)
     const speed=crouch?1.65:sprinting?4.45:2.65,norm=moving?1/Math.hypot(forward,side):0,cs=Math.cos(player.dir),sn=Math.sin(player.dir),dx=(cs*forward-sn*side)*norm*speed*dt,dy=(sn*forward+cs*side)*norm*speed*dt;moveBody(player,dx,dy,player.radius)
@@ -123,13 +124,14 @@
   function loop(now){if(!running)return;const dt=Math.min(.033,(now-last)/1000);last=now;if(!paused){remaining=Math.max(0,remaining-dt);updatePlayer(dt);updateEnemies(dt);if(remaining<=0){finish(false);return}}render();requestAnimationFrame(loop)}
   document.addEventListener('keydown',e=>{keys[e.code]=true;if(e.code==='Space'&&running&&!paused&&player.onGround&&crouchBlend<.3){player.vz=4.35;player.onGround=false;sound(130,.04,'sine',.012,30)}if(e.code==='KeyR')reload();if((e.code==='Escape'||e.code==='KeyP')&&running)pauseGame()})
   document.addEventListener('keyup',e=>keys[e.code]=false)
-  document.addEventListener('mousemove',e=>{if(paused||!running)return;if(document.pointerLockElement===canvas){const sens=.0022*(ads>.5?.68:1);player.dir+=e.movementX*sens;player.pitch=Math.max(-.30,Math.min(.30,player.pitch+e.movementY*sens*.62));weaponSwayX=Math.max(-.12,Math.min(.12,weaponSwayX+e.movementX*.00017));weaponSwayY=Math.max(-.1,Math.min(.1,weaponSwayY+e.movementY*.00015))}else{fallbackAim.x=Math.max(-1,Math.min(1,e.clientX/innerWidth*2-1));fallbackAim.y=Math.max(-1,Math.min(1,e.clientY/innerHeight*2-1));weaponSwayX=fallbackAim.x*.035;weaponSwayY=fallbackAim.y*.025}})
+  document.addEventListener('mousemove',e=>{if(paused||!running)return;const locked=document.pointerLockElement===canvas;if(locked){const sens=.0027*sensitivity*(ads>.5?.68:1),dx=Math.max(-160,Math.min(160,e.movementX||0)),dy=Math.max(-160,Math.min(160,e.movementY||0));player.dir+=dx*sens;player.pitch=Math.max(-.30,Math.min(.30,player.pitch+dy*sens*.62));weaponSwayX=Math.max(-.12,Math.min(.12,weaponSwayX+dx*.00017));weaponSwayY=Math.max(-.1,Math.min(.1,weaponSwayY+dy*.00015))}else{const rawX=Number.isFinite(e.movementX)&&e.movementX!==0?e.movementX:(lastCursorX===null?0:e.clientX-lastCursorX),rawY=Number.isFinite(e.movementY)&&e.movementY!==0?e.movementY:(lastCursorY===null?0:e.clientY-lastCursorY),dx=Math.max(-120,Math.min(120,rawX)),dy=Math.max(-120,Math.min(120,rawY)),sens=.0032*sensitivity*(ads>.5?.72:1);player.dir+=dx*sens;player.pitch=Math.max(-.30,Math.min(.30,player.pitch+dy*sens*.60));fallbackAim.x=Math.max(-1,Math.min(1,e.clientX/innerWidth*2-1));fallbackAim.y=Math.max(-1,Math.min(1,e.clientY/innerHeight*2-1));weaponSwayX=Math.max(-.12,Math.min(.12,weaponSwayX+dx*.00014));weaponSwayY=Math.max(-.1,Math.min(.1,weaponSwayY+dy*.00012));lastCursorX=e.clientX;lastCursorY=e.clientY}})
   document.addEventListener('mousedown',e=>{if(!running||paused)return;if(e.button===0){mouseDown=true;fire()}if(e.button===2)adsDown=true})
   document.addEventListener('mouseup',e=>{if(e.button===0)mouseDown=false;if(e.button===2)adsDown=false})
   document.addEventListener('contextmenu',e=>e.preventDefault())
-  document.addEventListener('pointerlockchange',()=>{fallbackLook=document.pointerLockElement!==canvas;fallbackAim.x=fallbackAim.y=0;inputHint()})
-  canvas.addEventListener('mouseleave',()=>{if(fallbackLook)fallbackAim.x=fallbackAim.y=0})
+  document.addEventListener('pointerlockchange',()=>{fallbackLook=document.pointerLockElement!==canvas;fallbackAim.x=fallbackAim.y=0;lastCursorX=lastCursorY=null;inputHint()})
+  canvas.addEventListener('mouseleave',()=>{if(fallbackLook){fallbackAim.x=fallbackAim.y=0;lastCursorX=lastCursorY=null}})
   canvas.addEventListener('click',()=>{if(running&&!paused&&document.pointerLockElement!==canvas)requestLook()})
+  const sensitivityInput=$('sensitivity'),sensitivityValue=$('sensitivityValue');sensitivityInput.value=String(sensitivity);sensitivityValue.textContent=sensitivity.toFixed(1)+'×';sensitivityInput.oninput=()=>{sensitivity=Math.max(.5,Math.min(3,Number(sensitivityInput.value)||1.6));sensitivityValue.textContent=sensitivity.toFixed(1)+'×'}
   $('deployBtn').onclick=startRound;$('againBtn').onclick=startRound;$('resumeBtn').onclick=resumeGame;$('restartPauseBtn').onclick=startRound
   spawnEnemies();render()
 })()
