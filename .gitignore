@@ -1,4 +1,5 @@
 node_modules
+.dependencies-backup/
 .npm-cache
 .pnpm-store
 .env*
