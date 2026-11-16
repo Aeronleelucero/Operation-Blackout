@@ -1,15 +1,126 @@
 <!doctype html>
-<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#161c22"><title>Operation: Blackout / Foundry</title></head>
-<body><canvas id="game" aria-label="Operation Blackout 3D arena"></canvas>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#161c22">
+<meta name="description" content="Operation: Blackout — a fast browser multiplayer FPS. Host a room, share the code, fight in the Foundry.">
+<title>Operation: Blackout / Foundry</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22%3E%3Crect width=%2232%22 height=%2232%22 rx=%226%22 fill=%22%23141c23%22/%3E%3Cpath d=%22M16 6v7M16 19v7M6 16h7M19 16h7%22 stroke=%22%23c5f275%22 stroke-width=%223%22/%3E%3C/svg%3E">
+</head>
+<body>
+<canvas id="game" aria-label="Operation Blackout 3D arena"></canvas>
+
 <div id="hud" hidden>
- <section class="match"><div class="time"><span>◷</span><b id="timer">05:00</b></div><small id="telemetry">60 FPS · LOCAL</small><strong>FREE FOR ALL</strong><span>FOUNDRY / SECTOR 09</span><div class="match-score"><b id="localKills">0</b> ELIMINATIONS <i> / </i><b id="localDeaths">0</b> DEATHS</div></section>
- <section class="leaders"><div class="panel-title">LIVE RANKING <span id="roomBadge">TRAINING</span></div><div id="leaders"></div><div id="killFeed"></div></section>
- <div id="crosshair"><i></i><i></i><i></i><i></i><b></b></div><div id="hitmarker">×</div><div id="notice" role="status"></div><div id="damage"></div>
- <section class="bottom-left"><div id="chatLog" aria-live="polite"></div><input id="chatInput" maxlength="140" placeholder="Message your room · Enter to send" hidden aria-label="Chat message"><small id="chatHint">ENTER / CHAT</small><div class="identity"><div class="avatar">OB</div><div><small id="playerLabel">STRIKE OPERATIVE</small><div class="health-bar"><i id="healthFill"></i></div><small id="armor">ARMOR 50</small></div><strong id="health">100</strong><span>+</span></div></section>
- <section class="ammo-panel"><div class="weapon-slots"><b>1 / VX–7 CARBINE</b><span>2 / SIDEARM · UNAVAILABLE</span><span>3 / MELEE · UNAVAILABLE</span></div><small id="reloadLabel">AUTO / 5.56</small><div><b id="ammo">30</b><span id="reserve"> / 120</span><em>▮▮▮</em></div></section>
- <div id="scoreOverlay" hidden><h2>MATCH SCOREBOARD</h2><div id="scoreRows"></div></div>
+  <section class="hud-tl">
+    <div class="timer-box"><b id="timer">05:00</b></div>
+    <div class="mode-line"><strong>FREE FOR ALL</strong><span id="modeSub">FOUNDRY · FIRST TO 30</span></div>
+    <div class="match-score"><div><small>YOU</small><b id="myScore">0</b></div><div><small>LEADER</small><b id="leadScore">0</b></div><div><small>K / D</small><b id="kd">0 / 0</b></div></div>
+    <div class="net"><i id="pingDot"></i><span id="telemetry">60 FPS · LOCAL</span></div>
+  </section>
+
+  <section class="hud-tr">
+    <div class="board"><div class="board-head"><span>LEADERBOARD</span><span id="roomBadge">TRAINING</span></div><div id="leaders"></div></div>
+    <div id="killFeed" aria-live="polite"></div>
+  </section>
+
+  <div id="crosshair" aria-hidden="true"><i class="ch-l"></i><i class="ch-r"></i><i class="ch-t"></i><i class="ch-b"></i><b></b></div>
+  <div id="hitmarker" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+  <div id="dmgDirs" aria-hidden="true"></div>
+  <div id="notice" role="status"></div>
+  <div id="elim"></div>
+  <div id="damage"></div>
+  <div id="death" hidden><small>ELIMINATED BY</small><strong id="deathBy">—</strong><span id="deathTimer">RESPAWNING IN 3</span></div>
+  <div id="spawnShield" hidden>SPAWN SHIELD</div>
+
+  <section class="hud-bl">
+    <div id="chatLog" aria-live="polite"></div>
+    <input id="chatInput" maxlength="140" placeholder="Message your room · Enter to send" hidden aria-label="Chat message">
+    <small id="chatHint">ENTER · CHAT</small>
+    <div class="identity">
+      <div class="avatar" id="avatar">OB</div>
+      <div class="vitals">
+        <div class="name-row"><small id="playerLabel">STRIKE OPERATIVE</small><small id="teamLabel">FFA</small></div>
+        <div class="health-bar"><i id="healthFill"></i></div>
+        <div class="armor-bar"><i id="armorFill"></i></div>
+      </div>
+      <strong id="health">100</strong>
+    </div>
+  </section>
+
+  <section class="hud-br">
+    <div class="weapon-slots">
+      <div id="slot0" class="slot active"><kbd>1</kbd><span>VX-7 CARBINE</span><em id="slotAmmo0">30</em></div>
+      <div id="slot1" class="slot"><kbd>2</kbd><span>P-11 SIDEARM</span><em id="slotAmmo1">12</em></div>
+      <div class="slot locked"><kbd>3</kbd><span>MELEE</span><em>—</em></div>
+    </div>
+    <div class="ammo-box">
+      <div class="weapon-name"><span id="weaponName">VX-7 CARBINE</span><small id="fireMode">AUTO · 5.56</small></div>
+      <div class="ammo-row"><b id="ammo">30</b><span id="reserve">/ 120</span></div>
+      <div class="reload-bar" id="reloadBar"><i id="reloadFill"></i><span>RELOADING</span></div>
+    </div>
+  </section>
+
+  <div id="scoreOverlay" hidden>
+    <h2>MATCH SCOREBOARD <span id="scoreMeta"></span></h2>
+    <div class="score-head"><span>#</span><span>OPERATIVE</span><span>K</span><span>D</span><span>SCORE</span><span>PING</span></div>
+    <div id="scoreRows"></div>
+  </div>
 </div>
-<main id="menu" class="overlay"><section class="menu-card"><a href="/" class="brand">OB <span>OPERATION: BLACKOUT</span></a><div class="tag">MULTIPLAYER / SECTOR 09</div><h1>WELCOME TO<br><em>THE FOUNDRY.</em></h1><p>Fast combat. Open rooftops. No second chances.<br>Host a room, share the code, and fight for the top spot.</p><label>CALLSIGN<input id="name" maxlength="18" value="Strike One" autocomplete="nickname"></label><div class="room-actions"><button id="hostBtn" class="primary">HOST GAME <span>↗</span></button><div><input id="roomCode" maxlength="6" placeholder="6-CHAR CODE" aria-label="Room code"><button id="joinBtn">JOIN →</button></div></div><div id="networkStatus" role="status">12 OPERATIVES MAX · PEER HOSTED</div><div id="lobby" hidden><div class="lobby-title">ROOM <b id="codeDisplay"></b><button id="copyCode">COPY CODE</button></div><div id="roster"></div><button id="startBtn" class="primary">START MATCH</button><button id="leaveBtn" class="text-button">LEAVE ROOM</button></div><button id="practiceBtn" class="secondary">SOLO TRAINING / 5 BOTS</button><div class="settings"><label>SENSITIVITY <output id="sensValue">1.6×</output><input id="sensitivity" type="range" min="0.5" max="3" step="0.1" value="1.6"></label><label>QUALITY<select id="quality"><option value="auto">ADAPTIVE</option><option value="low">LOW</option><option value="high">HIGH</option></select></label><label><input id="sound" type="checkbox" checked> SOUND</label></div><footer>WASD MOVE · SHIFT SPRINT · CTRL SLIDE · SPACE JUMP<br>R RELOAD · RMB AIM · TAB SCORES · ESC PAUSE</footer><div id="loadStatus">Loading 3D engine…</div></section></main>
-<section id="pause" class="overlay" hidden><div class="menu-card compact"><div class="tag">TACTICAL LINK</div><h1>PAUSED.</h1><p>The multiplayer match continues while you are paused.</p><button id="resumeBtn" class="primary">RETURN TO MATCH</button><button id="fullscreenBtn" class="secondary">TOGGLE FULLSCREEN</button><button id="exitBtn" class="text-button">LEAVE MATCH</button></div></section>
-<section id="results" class="overlay" hidden><div class="menu-card compact"><div class="tag">OPERATION COMPLETE</div><h1 id="winner">MATCH OVER</h1><div id="resultRows"></div><button id="restartBtn" class="primary">PLAY AGAIN</button><button id="resultExit" class="text-button">RETURN TO LOBBY</button></div></section>
-<script type="module" src="/src/game/main.js"></script></body></html>
+
+<main id="menu" class="overlay">
+  <section class="menu-card">
+    <a href="/" class="brand">OB <span>OPERATION: BLACKOUT</span></a>
+    <div class="tag">MULTIPLAYER / SECTOR 09</div>
+    <h1>WELCOME TO<br><em>THE FOUNDRY.</em></h1>
+    <p>Fast combat. Open rooftops. No second chances.<br>Host a room, share the code, and fight for the top spot.</p>
+    <label>CALLSIGN<input id="name" maxlength="18" value="Strike One" autocomplete="nickname"></label>
+    <div class="room-actions">
+      <button id="hostBtn" class="primary">HOST GAME <span>↗</span></button>
+      <div><input id="roomCode" maxlength="6" placeholder="6-CHAR CODE" aria-label="Room code" autocomplete="off" spellcheck="false"><button id="joinBtn">JOIN ROOM →</button></div>
+    </div>
+    <div id="networkStatus" role="status">12 OPERATIVES MAX · PEER HOSTED</div>
+    <div id="lobby" hidden>
+      <div class="lobby-title">ROOM <b id="codeDisplay"></b><button id="copyCode">COPY CODE</button></div>
+      <div id="roster"></div>
+      <div id="lobbyHint">Waiting for the host to start the match…</div>
+      <button id="startBtn" class="primary">START MATCH</button>
+      <button id="leaveBtn" class="text-button">LEAVE ROOM</button>
+    </div>
+    <button id="practiceBtn" class="secondary">SOLO TRAINING / 5 BOTS</button>
+    <div class="settings">
+      <label>SENSITIVITY <output id="sensValue">1.6×</output><input id="sensitivity" type="range" min="0.5" max="3" step="0.1" value="1.6"></label>
+      <label>FOV <output id="fovValue">90°</output><input id="fov" type="range" min="70" max="110" step="1" value="90"></label>
+      <label>QUALITY<select id="quality"><option value="auto">ADAPTIVE</option><option value="low">LOW</option><option value="high">HIGH</option></select></label>
+      <label class="check"><input id="sound" type="checkbox" checked> SOUND</label>
+    </div>
+    <footer>WASD MOVE · SHIFT SPRINT · CTRL or C SLIDE/CROUCH · SPACE JUMP (HOLD TO HOP)<br>LMB FIRE · RMB AIM · R RELOAD · 1/2 WEAPONS · TAB SCORES · ENTER CHAT · ESC PAUSE</footer>
+    <div id="loadStatus">Loading 3D engine…</div>
+  </section>
+</main>
+
+<section id="pause" class="overlay" hidden>
+  <div class="menu-card compact">
+    <div class="tag" id="pauseTag">TACTICAL LINK</div>
+    <h1 id="pauseTitle">PAUSED.</h1>
+    <p id="pauseText">The multiplayer match continues while you are paused.</p>
+    <button id="resumeBtn" class="primary">RETURN TO MATCH</button>
+    <button id="fullscreenBtn" class="secondary">TOGGLE FULLSCREEN</button>
+    <button id="exitBtn" class="text-button">LEAVE MATCH</button>
+  </div>
+</section>
+
+<section id="results" class="overlay" hidden>
+  <div class="menu-card compact">
+    <div class="tag">OPERATION COMPLETE</div>
+    <h1 id="winner">MATCH OVER</h1>
+    <div id="resultRows"></div>
+    <button id="restartBtn" class="primary">PLAY AGAIN</button>
+    <div id="restartHint">Waiting for the host to restart…</div>
+    <button id="resultExit" class="text-button">LEAVE ROOM</button>
+  </div>
+</section>
+
+<script type="module" src="/src/game/main.js"></script>
+</body>
+</html>
