@@ -12,20 +12,12 @@
     "test:net": "node --test scripts/net.test.mjs"
   },
   "dependencies": {
-    "@react-three/drei": "^10.7.7",
-    "@react-three/fiber": "^9.4.0",
-    "framer-motion": "^12.23.24",
-    "lucide-react": "^0.552.0",
     "peerjs": "^1.5.5",
-    "react": "^19.2.0",
-    "react-dom": "^19.2.0",
     "three": "^0.181.1"
   },
   "devDependencies": {
-    "@vitejs/plugin-react": "^5.1.1",
     "autoprefixer": "^10.4.21",
     "postcss": "^8.5.6",
-    "tailwindcss": "^3.4.17",
     "vite": "^7.2.2"
   }
 }

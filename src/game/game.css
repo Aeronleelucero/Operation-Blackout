@@ -1,4 +1,59 @@
-@import url('https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700;800;900&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+@font-face {
+  font-family: 'Barlow Condensed';
+  font-style: normal;
+  font-weight: 500;
+  font-display: optional;
+  src: url(./fonts/BarlowCondensed-500.ttf) format('truetype');
+}
+@font-face {
+  font-family: 'Barlow Condensed';
+  font-style: normal;
+  font-weight: 600;
+  font-display: optional;
+  src: url(./fonts/BarlowCondensed-600.ttf) format('truetype');
+}
+@font-face {
+  font-family: 'Barlow Condensed';
+  font-style: normal;
+  font-weight: 700;
+  font-display: optional;
+  src: url(./fonts/BarlowCondensed-700.ttf) format('truetype');
+}
+@font-face {
+  font-family: 'Barlow Condensed';
+  font-style: normal;
+  font-weight: 800;
+  font-display: optional;
+  src: url(./fonts/BarlowCondensed-800.ttf) format('truetype');
+}
+@font-face {
+  font-family: 'Barlow Condensed';
+  font-style: normal;
+  font-weight: 900;
+  font-display: optional;
+  src: url(./fonts/BarlowCondensed-900.ttf) format('truetype');
+}
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: optional;
+  src: url(./fonts/IBMPlexMono-400.ttf) format('truetype');
+}
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-weight: 500;
+  font-display: optional;
+  src: url(./fonts/IBMPlexMono-500.ttf) format('truetype');
+}
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-weight: 600;
+  font-display: optional;
+  src: url(./fonts/IBMPlexMono-600.ttf) format('truetype');
+}
 
 :root {
   font-family: 'Barlow Condensed', 'Arial Narrow', sans-serif;
@@ -210,3 +265,8 @@ footer { font: 9px/1.8 'IBM Plex Mono', monospace; color: #80949d; margin-top: 1
   .menu-card { width: 100% } .overlay { padding: 16px } .settings { grid-template-columns: 1fr }
 }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important } }
+
+/* The HTML stylesheet paints the dashboard before the engine module loads. */
+#engineLoading { position: fixed; right: 24px; bottom: 24px; padding: 10px 14px; border-radius: 5px; background: var(--panel-solid); color: var(--acid); font: 600 11px 'IBM Plex Mono', monospace; z-index: 1 }
+body[data-engine="loading"] #game { background: #9fd2f2 }
+body[data-engine="loading"] #hostBtn, body[data-engine="loading"] #joinBtn, body[data-engine="loading"] #practiceBtn { pointer-events: none; opacity: .45 }

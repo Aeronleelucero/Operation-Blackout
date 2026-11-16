@@ -1,7 +1,6 @@
 // Operation: Blackout — client. Renders the arena, predicts the local player with the shared
 // simulation, reconciles against host snapshots, interpolates remote players and drives the HUD.
 import * as T from 'three'
-import './game.css'
 import { buildArena } from './arena.js'
 import { Viewmodel } from './viewmodel.js'
 import { makeSoldier } from './soldier.js'
@@ -22,6 +21,8 @@ let renderer
 try {
   renderer = new T.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance', stencil: false })
 } catch (error) {
+  document.body.dataset.engine = 'error'
+  $('engineLoading').textContent = 'WebGL unavailable · enable hardware acceleration and reload.'
   $('loadStatus').textContent = 'WebGL could not start. Enable hardware acceleration and reload.'
   throw error
 }
@@ -827,6 +828,12 @@ function frame(now) {
   }
 }
 
+camera.position.set(30, 14, 30)
+camera.lookAt(0, 2, 0)
+renderer.clear()
+renderer.render(scene, camera)
+$('engineLoading').hidden = true
+document.body.dataset.engine = 'ready'
 $('loadStatus').textContent = '3D ENGINE READY · FOUNDRY ARENA · VX-7 / P-11 / KX-3'
 requestAnimationFrame(frame)
 
