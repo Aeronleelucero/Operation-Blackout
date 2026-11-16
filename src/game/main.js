@@ -1,7 +1,6 @@
 // Operation: Blackout — client. Renders the arena, predicts the local player with the shared
 // simulation, reconciles against host snapshots, interpolates remote players and drives the HUD.
 import * as T from 'three'
-import './game.css'
 import { buildArena } from './arena.js'
 import { Viewmodel } from './viewmodel.js'
 import { makeSoldier } from './soldier.js'
@@ -22,6 +21,8 @@ let renderer
 try {
   renderer = new T.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance', stencil: false })
 } catch (error) {
+  document.body.dataset.engine = 'error'
+  $('engineLoading').textContent = 'WebGL unavailable · enable hardware acceleration and reload.'
   $('loadStatus').textContent = 'WebGL could not start. Enable hardware acceleration and reload.'
   throw error
 }
@@ -99,6 +100,7 @@ const renderTime = () => interp.renderTime(nowSec())
 // join, leave, or lose a connection, so nothing (prediction, snapshots, event ids, phase, round,
 // remote players, HUD feeds) can leak from a previous session into the next.
 function resetSession() {
+  effects.clear()
   state = { phase: 'menu', players: [], events: [], pickups: 0 }
   previousPhase = 'menu'
   roundKey = null
@@ -205,7 +207,7 @@ function killFeed(e) {
 // ------------------------------------------------------------------------------------ network
 const room = new Room({
   onState,
-  onEvents: (list, sid) => { if (interp.sid === null || sid === interp.sid) for (const e of list) handleEvent(e) },
+  onEvents: (list, sid) => { if (interp.sid !== null && sid === interp.sid) for (const e of list) handleEvent(e) },
   onStatus: text => { $('networkStatus').textContent = text },
   onChat: (name, text) => chat(name, text),
   onConnection,
@@ -251,6 +253,7 @@ function onState(next) {
   const key = next.sid + ':' + next.round
   if (key !== roundKey) {
     // New round in this session: drop round-scoped prediction (sequence numbers continue).
+    effects.clear()
     roundKey = key
     predictor.pending = []
     predictor.me = me = null
@@ -307,6 +310,8 @@ function handleEvent(e) {
   const time = performance.now() / 1000
   switch (e.type) {
     case 'shot': {
+      // Reliable events may arrive after a stalled link; never replay old shot visuals.
+      if (Number.isFinite(e.t) && interp.hostNow(nowSec()) - e.t > 0.45) break
       const point = new T.Vector3(e.point.x, e.point.y, e.point.z)
       if (e.id === room.id) {
         if (e.hit) {
@@ -707,6 +712,8 @@ function frame(now) {
   const dt = Math.min(0.05, realDt) // animation step (smooth even after a hitch)
   lastTime = now
   const time = now / 1000
+  // Age existing effects before prediction creates this frame's new shots.
+  effects.update(realDt)
 
   // Fixed-step local prediction (simulation keeps real time on slow frames, up to 15 catch-up ticks).
   acc += Math.min(0.25, realDt)
@@ -793,7 +800,6 @@ function frame(now) {
     if (pose.connected === false) model.root.visible = false
   }
   for (const m of pickupMeshes) if (m.visible) { m.rotation.y = time * 1.2; m.children[0].position.y = m.children[1].position.y = Math.sin(time * 2.4) * 0.05 }
-  effects.update(dt)
 
   renderer.clear()
   renderer.render(scene, camera)
@@ -822,12 +828,19 @@ function frame(now) {
   }
 }
 
+camera.position.set(30, 14, 30)
+camera.lookAt(0, 2, 0)
+renderer.clear()
+renderer.render(scene, camera)
+$('engineLoading').hidden = true
+document.body.dataset.engine = 'ready'
 $('loadStatus').textContent = '3D ENGINE READY · FOUNDRY ARENA · VX-7 / P-11 / KX-3'
 requestAnimationFrame(frame)
 
 // Read-only telemetry for reproducible browser validation.
 window.blackoutDiagnostics = () => ({
   renderer: { ...renderer.info.render }, memory: { ...renderer.info.memory }, programs: renderer.info.programs?.length, phase: state.phase, room: room.code, isHost: room.isHost, fps, locked,
+  effects: { tracers: effects.t.filter(t => t.life > 0).length, emitted: effects.tracerCount, max: effects.maxT },
   conn: room.conn, sid: interp.sid, round: state.round, soldiers: soldiers.size,
   me: me && { x: me.x, y: me.y, z: me.z, hp: me.hp, ammo: me.ammo, reserve: me.reserve, weapon: me.weapon, ground: me.ground, aiming: me.aiming, kills: serverMe?.kills, height: me.height, slide: me.slide, protect: me.protect },
   pending: predictor.pending.length, prediction: { ...predictor.stats }, interpolation: { ...interp.stats }, net: { ...room.metrics },
