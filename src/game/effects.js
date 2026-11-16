@@ -4,6 +4,8 @@ import * as T from 'three'
 import { decalTexture, glowTexture } from './textures.js'
 
 const _m = new T.Matrix4(), _q = new T.Quaternion(), _s = new T.Vector3(), _p = new T.Vector3(), _c = new T.Color()
+export const TRACER_LIFETIME = 0.1
+
 const Z = new T.Vector3(0, 0, 1), HIDDEN = new T.Matrix4().makeScale(0, 0, 0)
 
 export class Effects {
@@ -20,9 +22,17 @@ export class Effects {
     scene.add(this.particles)
 
     // Tracers
+    this.tracerCount = 0
     this.maxT = 48
     const tgeo = new T.BoxGeometry(1, 1, 1).translate(0, 0, 0.5)
     this.tracers = new T.InstancedMesh(tgeo, new T.MeshBasicMaterial({ color: '#ffe3a3', transparent: true, opacity: 0.85, blending: T.AdditiveBlending, depthWrite: false }), this.maxT)
+    this.tracerOpacity = new T.InstancedBufferAttribute(new Float32Array(this.maxT), 1)
+    this.tracerOpacity.setUsage(T.DynamicDrawUsage)
+    tgeo.setAttribute('tracerOpacity', this.tracerOpacity)
+    this.tracers.material.onBeforeCompile = shader => {
+      shader.vertexShader = 'attribute float tracerOpacity; varying float vTracerOpacity;\n' + shader.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\nvTracerOpacity = tracerOpacity;')
+      shader.fragmentShader = 'varying float vTracerOpacity;\n' + shader.fragmentShader.replace('#include <color_fragment>', '#include <color_fragment>\ndiffuseColor.a *= vTracerOpacity;')
+    }
     this.tracers.instanceMatrix.setUsage(T.DynamicDrawUsage)
     this.tracers.frustumCulled = false
     this.t = Array.from({ length: this.maxT }, () => ({ from: new T.Vector3(), dir: new T.Vector3(), len: 0, travelled: 0, life: 0 }))
@@ -100,11 +110,13 @@ export class Effects {
   }
 
   tracer(from, to, speed = 260) {
+    this.tracerCount++
     const t = this.t[this.tCursor]
     this.tCursor = (this.tCursor + 1) % this.maxT
     t.from.copy(from); t.dir.subVectors(to, from)
     t.len = t.dir.length(); t.dir.normalize()
-    t.travelled = 0; t.life = 1; t.speed = speed
+    t.travelled = Math.min(t.len, 3.5); t.life = TRACER_LIFETIME; t.speed = speed
+    this.drawTracer((this.tCursor + this.maxT - 1) % this.maxT)
   }
 
   glow(pos, size = 1, life = 0.06, color = '#ffd28a') {
@@ -141,6 +153,32 @@ export class Effects {
     }
   }
 
+  drawTracer(i) {
+    const t = this.t[i]
+    this.tracerOpacity.setX(i, t.life / TRACER_LIFETIME)
+    this.tracerOpacity.needsUpdate = true
+    if (t.life <= 0) this.tracers.setMatrixAt(i, HIDDEN)
+    else {
+      const head = Math.min(t.len, Math.max(0.01, t.travelled)), tail = Math.max(0, head - 3.5)
+      _q.setFromUnitVectors(Z, t.dir)
+      _m.compose(_p.copy(t.from).addScaledVector(t.dir, tail), _q, _s.set(0.018, 0.018, Math.max(0.01, head - tail)))
+      this.tracers.setMatrixAt(i, _m)
+    }
+    this.tracers.instanceMatrix.needsUpdate = true
+  }
+
+  // Pools keep their shared GPU resources; reset only their active contents.
+  clear() {
+    for (let i = 0; i < this.maxT; i++) { this.t[i].life = 0; this.drawTracer(i) }
+    for (let i = 0; i < this.maxP; i++) { this.p[i].life = 0; this.particles.setMatrixAt(i, HIDDEN) }
+    for (let i = 0; i < this.maxD; i++) this.decals.setMatrixAt(i, HIDDEN)
+    this.particles.instanceMatrix.needsUpdate = this.decals.instanceMatrix.needsUpdate = true
+    for (const g of this.glows) { g.life = 0; g.s.visible = false }
+    for (const p of this.pillars) { p.life = 0; p.m.visible = false }
+    this.lightLife = this.light.intensity = 0
+    this.tCursor = this.pCursor = this.dCursor = this.gCursor = this.pillarCursor = 0
+  }
+
   update(dt) {
     for (let i = 0; i < this.maxP; i++) {
       const e = this.p[i]
@@ -161,12 +199,9 @@ export class Effects {
     for (let i = 0; i < this.maxT; i++) {
       const t = this.t[i]
       if (t.life <= 0) continue
+      t.life = Math.max(0, t.life - dt)
       t.travelled += t.speed * dt
-      const head = Math.min(t.len, t.travelled), tail = Math.max(0, head - 3.5)
-      if (tail >= t.len - 0.01) { t.life = 0; this.tracers.setMatrixAt(i, HIDDEN); continue }
-      _q.setFromUnitVectors(Z, t.dir)
-      _m.compose(_p.copy(t.from).addScaledVector(t.dir, tail), _q, _s.set(0.018, 0.018, Math.max(0.01, head - tail)))
-      this.tracers.setMatrixAt(i, _m)
+      this.drawTracer(i)
     }
     this.tracers.instanceMatrix.needsUpdate = true
 

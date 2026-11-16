@@ -50,7 +50,7 @@ export class Authority {
   }
 
   event(type, data = {}) {
-    const e = { type, ...data, eventId: ++this.eventId }
+    const e = { type, ...data, t: this.time, eventId: ++this.eventId }
     this.events.push(e)
     return e
   }
