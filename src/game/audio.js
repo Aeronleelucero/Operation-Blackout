@@ -83,6 +83,9 @@ export class Sound {
     if (!distance) this.noiseBurst(d, { t: 0.05, dur: 0.035, gain: 0.07, freq: 5200, q: 4 }) // mechanism
   }
 
+  swing() { if (!this.ensure()) return; const d = this.out(0.1, 0.4); this.noiseBurst(d, { dur: 0.18, gain: 0.6, freq: 900, q: 0.7, sweep: 3200, attack: 0.02 }) }
+  pickup() { if (!this.ensure()) return; const d = this.out(0, 0.4); this.tone(d, { dur: 0.08, gain: 0.25, freq: 660, type: 'triangle' }); this.tone(d, { t: 0.07, dur: 0.12, gain: 0.25, freq: 990, type: 'triangle' }); this.noiseBurst(d, { t: 0.02, dur: 0.06, gain: 0.4, freq: 2400, q: 3 }) }
+
   dry() { if (!this.ensure()) return; const d = this.out(0, 0.5); this.tone(d, { dur: 0.03, gain: 0.3, freq: 2400, end: 1200, type: 'square' }) }
 
   reload(weapon = 0) {

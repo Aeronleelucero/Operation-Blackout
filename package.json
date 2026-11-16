@@ -7,7 +7,9 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test:game": "node --test scripts/game.test.mjs"
+    "test:game": "node --test scripts/game.test.mjs",
+    "test": "node --test scripts/",
+    "test:net": "node --test scripts/net.test.mjs"
   },
   "dependencies": {
     "@react-three/drei": "^10.7.7",

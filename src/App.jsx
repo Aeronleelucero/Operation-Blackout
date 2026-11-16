@@ -176,7 +176,7 @@ function Loadout({ activeId, setActiveId }) {
   return (
     <section className="section loadout-section" id="loadout">
       <div className="section-index">02 — ARMORY ACCESS</div>
-      <div className="section-heading"><div><BracketLabel>CONFIGURE</BracketLabel><h2>SELECT YOUR<br /><em>PRIMARY.</em></h2></div><p>Field kits are calibrated for zero-light conditions. Select a platform to update the live 3D preview above.</p></div>
+      <div className="section-heading"><div><BracketLabel>BRIEFING PREVIEW</BracketLabel><h2>SELECT YOUR<br /><em>PRIMARY.</em></h2></div><p>Briefing preview only — select a platform to update the 3D preview above. In the Foundry every operative deploys with the same kit: VX-7 carbine, P-11 sidearm and KX-3 knife.</p></div>
       <div className="loadout-grid">
         <div className="loadout-list" role="tablist" aria-label="Primary weapon selection">
           {LOADOUTS.map((item, index) => (
@@ -231,24 +231,40 @@ function DeploySection({ onDeploy }) {
       <LockKeyhole />
       <BracketLabel>ALL SYSTEMS NOMINAL</BracketLabel>
       <h2>READY TO<br /><em>GO DARK?</em></h2>
-      <p>Confirming deployment will lock your selected kit and initiate the insertion sequence.</p>
+      <p>Run the insertion sequence and drop straight into the Foundry — host a room, join friends with a code, or train against bots.</p>
       <button className="deploy-button" onClick={onDeploy}><span>DEPLOY NOW</span><ChevronRight /></button>
       <small className="legal">SIMULATION // FICTIONAL TRAINING ENVIRONMENT // UNIT 07</small>
     </section>
   )
 }
 
+const GAME_URL = '/play.html'
+
 function DeployOverlay({ onClose }) {
   const [stage, setStage] = useState(0)
+  const [cancelled, setCancelled] = useState(false)
   useEffect(() => {
-    const times = [setTimeout(() => setStage(1), 850), setTimeout(() => setStage(2), 1900), setTimeout(() => setStage(3), 3100)]
+    const times = [setTimeout(() => setStage(1), 650), setTimeout(() => setStage(2), 1400), setTimeout(() => setStage(3), 2200)]
     return () => times.forEach(clearTimeout)
   }, [])
-  const labels = ['ENCRYPTING LOADOUT', 'UPLINK ESTABLISHED', 'INSERTION VECTOR LOCKED', 'CLEARED FOR DEPLOYMENT']
+  // After the sequence completes, continue into the actual game unless the player chose to stay.
+  useEffect(() => {
+    if (stage !== 3 || cancelled) return
+    const t = setTimeout(() => window.location.assign(GAME_URL), 1600)
+    return () => clearTimeout(t)
+  }, [stage, cancelled])
+  const labels = ['ENCRYPTING UPLINK', 'ROOM SERVICE LINKED', 'INSERTION VECTOR LOCKED', 'CLEARED FOR DEPLOYMENT']
   return (
-    <motion.div className="deploy-overlay" initial={{ clipPath: 'inset(50% 0 50% 0)' }} animate={{ clipPath: 'inset(0% 0 0% 0)' }} exit={{ clipPath: 'inset(50% 0 50% 0)' }} transition={{ duration: .45 }}>
+    <motion.div className="deploy-overlay" role="dialog" aria-label="Deploying to the Foundry" initial={{ clipPath: 'inset(50% 0 50% 0)' }} animate={{ clipPath: 'inset(0% 0 0% 0)' }} exit={{ clipPath: 'inset(50% 0 50% 0)' }} transition={{ duration: .45 }}>
       <div className="deploy-scan" /><Crosshair className="deploy-mark" />
-      <div className="deploy-status"><small>OPERATION BLACKOUT // INSERTION</small><h2>{stage < 3 ? 'STAND BY' : 'YOU ARE CLEARED'}</h2><div className="loader"><motion.i animate={{ width: `${(stage + 1) * 25}%` }} /></div><p>{labels[stage]} <span>{String((stage + 1) * 25).padStart(3, '0')}%</span></p>{stage === 3 && <button onClick={onClose}><Check /> RETURN TO BRIEFING</button>}</div>
+      <div className="deploy-status">
+        <small>OPERATION BLACKOUT // INSERTION</small>
+        <h2>{stage < 3 ? 'STAND BY' : cancelled ? 'READY WHEN YOU ARE' : 'ENTERING THE FOUNDRY'}</h2>
+        <div className="loader"><motion.i animate={{ width: `${(stage + 1) * 25}%` }} /></div>
+        <p>{labels[stage]} <span>{String((stage + 1) * 25).padStart(3, '0')}%</span></p>
+        {stage === 3 && <a className="deploy-enter" href={GAME_URL}><ChevronRight /> ENTER THE FOUNDRY NOW</a>}
+        <button onClick={() => { setCancelled(true); onClose() }}><Check /> STAY ON THE BRIEFING</button>
+      </div>
     </motion.div>
   )
 }

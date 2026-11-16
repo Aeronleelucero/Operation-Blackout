@@ -7,9 +7,9 @@
 <meta name="description" content="Operation: Blackout — a fast browser multiplayer FPS. Host a room, share the code, fight in the Foundry.">
 <title>Operation: Blackout / Foundry</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22%3E%3Crect width=%2232%22 height=%2232%22 rx=%226%22 fill=%22%23141c23%22/%3E%3Cpath d=%22M16 6v7M16 19v7M6 16h7M19 16h7%22 stroke=%22%23c5f275%22 stroke-width=%223%22/%3E%3C/svg%3E">
-  <script type="module" crossorigin src="/assets/play-DvwY2IKG.js"></script>
-  <link rel="modulepreload" crossorigin href="/assets/three.module-DAfA7xTJ.js">
-  <link rel="stylesheet" crossorigin href="/assets/play-ek-3pnkO.css">
+  <script type="module" crossorigin src="/assets/play-D8evyTd7.js"></script>
+  <link rel="modulepreload" crossorigin href="/assets/three.module-CaSslU7L.js">
+  <link rel="stylesheet" crossorigin href="/assets/play-DVPt-2VG.css">
 </head>
 <body>
 <canvas id="game" aria-label="Operation Blackout 3D arena"></canvas>
@@ -33,7 +33,9 @@
   <div id="notice" role="status"></div>
   <div id="elim"></div>
   <div id="damage"></div>
-  <div id="death" hidden><small>ELIMINATED BY</small><strong id="deathBy">—</strong><span id="deathTimer">RESPAWNING IN 3</span></div>
+  <div id="death" hidden><small>ELIMINATED BY</small><strong id="deathBy">—</strong><span id="deathTimer">RESPAWNING IN 3</span><em id="spectating"></em></div>
+  <div id="netBanner" hidden role="alert">CONNECTION LOST · RECONNECTING…</div>
+  <pre id="netStats" hidden></pre>
   <div id="spawnShield" hidden>SPAWN SHIELD</div>
 
   <section class="hud-bl">
@@ -55,7 +57,7 @@
     <div class="weapon-slots">
       <div id="slot0" class="slot active"><kbd>1</kbd><span>VX-7 CARBINE</span><em id="slotAmmo0">30</em></div>
       <div id="slot1" class="slot"><kbd>2</kbd><span>P-11 SIDEARM</span><em id="slotAmmo1">12</em></div>
-      <div class="slot locked"><kbd>3</kbd><span>MELEE</span><em>—</em></div>
+      <div id="slot2" class="slot"><kbd>3</kbd><span>KX-3 KNIFE</span><em>∞</em></div>
     </div>
     <div class="ammo-box">
       <div class="weapon-name"><span id="weaponName">VX-7 CARBINE</span><small id="fireMode">AUTO · 5.56</small></div>
@@ -83,6 +85,7 @@
       <div><input id="roomCode" maxlength="6" placeholder="6-CHAR CODE" aria-label="Room code" autocomplete="off" spellcheck="false"><button id="joinBtn">JOIN ROOM →</button></div>
     </div>
     <div id="networkStatus" role="status">12 OPERATIVES MAX · PEER HOSTED</div>
+    <button id="retryBtn" class="secondary" hidden>RETRY CONNECTION</button>
     <div id="lobby" hidden>
       <div class="lobby-title">ROOM <b id="codeDisplay"></b><button id="copyCode">COPY CODE</button></div>
       <div id="roster"></div>
@@ -97,7 +100,7 @@
       <label>QUALITY<select id="quality"><option value="auto">ADAPTIVE</option><option value="low">LOW</option><option value="high">HIGH</option></select></label>
       <label class="check"><input id="sound" type="checkbox" checked> SOUND</label>
     </div>
-    <footer>WASD MOVE · SHIFT SPRINT · CTRL or C SLIDE/CROUCH · SPACE JUMP (HOLD TO HOP)<br>LMB FIRE · RMB AIM · R RELOAD · 1/2 WEAPONS · TAB SCORES · ENTER CHAT · ESC PAUSE</footer>
+    <footer>WASD MOVE · SHIFT SPRINT · CTRL or C SLIDE/CROUCH · SPACE JUMP (HOLD TO HOP)<br>LMB FIRE · RMB AIM · R RELOAD · 1/2/3 WEAPONS · TAB SCORES · F3 NET STATS · ENTER CHAT · ESC PAUSE</footer>
     <div id="loadStatus">Loading 3D engine…</div>
   </section>
 </main>
@@ -119,7 +122,8 @@
     <h1 id="winner">MATCH OVER</h1>
     <div id="resultRows"></div>
     <button id="restartBtn" class="primary">PLAY AGAIN</button>
-    <div id="restartHint">Waiting for the host to restart…</div>
+    <div id="restartHint">Waiting for the host to start the next round…</div>
+    <button id="lobbyBtn" class="secondary">RETURN TO LOBBY</button>
     <button id="resultExit" class="text-button">LEAVE ROOM</button>
   </div>
 </section>

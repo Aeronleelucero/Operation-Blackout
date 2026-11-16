@@ -2,7 +2,7 @@
 // clips into walls and keeps a constant on-screen size regardless of the world FOV.
 import * as T from 'three'
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js'
-import { weaponMaterials, buildRifle, buildPistol, buildHand, poseHand, buildArm, solveArm } from './weapons3d.js'
+import { weaponMaterials, buildRifle, buildPistol, buildKnife, buildHand, poseHand, buildArm, solveArm } from './weapons3d.js'
 import { WEAPONS, clamp } from './world.js'
 
 const V = (x, y, z) => new T.Vector3(x, y, z)
@@ -34,6 +34,14 @@ const POSES = {
     left: { pos: V(-0.034, -0.06, 0.07), q: basis(V(0, -0.94, 0.34), V(-1, 0, 0), [0, 0.2, 0]), curls: [1.6, 1.7, 1.75, 1.8], thumb: [0.2, -0.5, 0.2] },
     leftElbow: V(-0.13, -0.26, 0.3), leftShoulder: V(-0.2, -0.32, 0.62),
   },
+  knife: {
+    hip: { pos: V(0.15, -0.14, -0.3), rot: new T.Euler(0.12, 0.28, -0.25) },
+    adsDistance: 0.3,
+    right: { pos: V(0.03, 0.034, 0.03), q: basis(V(0, -0.5, 0.87), V(1, 0, 0), [0, -0.1, 0]), curls: [2.0, 2.1, 2.15, 2.2], thumb: [-0.3, -0.9, 0.7] },
+    rightElbow: V(0.1, -0.22, 0.3), rightShoulder: V(0.2, -0.3, 0.62),
+    left: { pos: V(-0.3, -0.5, 0.2), q: basis(V(0, 0, -1), V(0, -1, 0)), curls: [1, 1, 1, 1], thumb: [0.3, 0, 0.2] },
+    leftElbow: V(-0.3, -0.6, 0.3), leftShoulder: V(-0.32, -0.7, 0.6),
+  },
 }
 
 class Spring {
@@ -62,9 +70,14 @@ export class Viewmodel {
     this.M = weaponMaterials()
     this.pivot = new T.Group()
     this.scene.add(this.pivot)
-    this.rigs = [this.makeRig('rifle', buildRifle(this.M)), this.makeRig('pistol', buildPistol(this.M))]
+    this.rigs = [this.makeRig('rifle', buildRifle(this.M)), this.makeRig('pistol', buildPistol(this.M)), this.makeRig('knife', buildKnife(this.M))]
     this.weapon = 0
-    this.rigs[1].group.visible = false
+    this.rigs[1].group.visible = this.rigs[2].group.visible = false
+    // The knife is held one-handed with the blade angled forward-up.
+    const knife = this.rigs[2]
+    knife.model.root.rotation.x = 0.52
+    knife.left.visible = knife.leftArm.visible = false
+    this.swing = 0
 
     // Shell casings (pooled).
     const shellGeo = new T.CylinderGeometry(0.0045, 0.0045, 0.024, 8).rotateZ(Math.PI / 2)
@@ -108,6 +121,7 @@ export class Viewmodel {
   }
 
   fire() {
+    if (this.weapon === 2) { this.swing = 1; return }
     const strength = this.weapon === 0 ? 1 : 1.35
     const a = 1 - this.aim * 0.55
     this.recoilZ.v += 1.25 * strength * a
@@ -116,9 +130,11 @@ export class Viewmodel {
     this.recoilRoll.v += (Math.random() - 0.4) * 5 * a
     this.flash = 0.05
     const rig = this.rigs[this.weapon]
-    rig.model.flash.visible = true
-    rig.model.flash.rotation.z = Math.random() * Math.PI
-    rig.model.flash.scale.setScalar(0.8 + Math.random() * 0.45)
+    if (rig.model.flash) {
+      rig.model.flash.visible = true
+      rig.model.flash.rotation.z = Math.random() * Math.PI
+      rig.model.flash.scale.setScalar(0.8 + Math.random() * 0.45)
+    }
     if (rig.model.slide) rig.model.slide.position.z = 0.03
     this.ejectShell()
   }
@@ -189,9 +205,22 @@ export class Viewmodel {
 
     // Reload choreography.
     rig.left.position.copy(rig.leftBase.pos); rig.left.quaternion.copy(rig.leftBase.q)
-    rig.model.magazine.position.copy(rig.model.magHome); rig.model.magazine.visible = true; rig.model.magazine.rotation.set(0, 0, 0)
+    if (rig.model.magazine) { rig.model.magazine.position.copy(rig.model.magHome); rig.model.magazine.visible = true; rig.model.magazine.rotation.set(0, 0, 0) }
     if (rig.model.chargingHandle) rig.model.chargingHandle.position.z = 0
-    if (s.reloadT >= 0) this.animateReload(rig, s.reloadT, pos, rot)
+    if (s.reloadT >= 0 && rig.model.magazine) this.animateReload(rig, s.reloadT, pos, rot)
+    // Knife slash: wind up right, cut across to the left, recover.
+    if (this.swing > 0) {
+      this.swing = Math.max(0, this.swing - dt / 0.5)
+      const t = 1 - this.swing
+      const cut = smooth((t - 0.12) / 0.3), back = smooth((t - 0.55) / 0.45)
+      const wind = smooth(t / 0.12) * (1 - cut)
+      pos.x += wind * 0.05 - cut * (1 - back) * 0.22
+      pos.y += wind * 0.04 - cut * (1 - back) * 0.03
+      pos.z -= cut * (1 - back) * 0.08
+      rot.y += wind * -0.4 + cut * (1 - back) * 1.25
+      rot.z += wind * -0.3 + cut * (1 - back) * 0.9
+      rot.x -= cut * (1 - back) * 0.25
+    }
     if (rig.model.slide) rig.model.slide.position.z = damp(rig.model.slide.position.z, 0, 30, dt)
 
     this.pivot.position.copy(pos)
@@ -200,18 +229,24 @@ export class Viewmodel {
     this.camera.updateProjectionMatrix()
 
     solveArm(rig.rightArm, rig.right.position, P.rightElbow, P.rightShoulder)
+    if (!rig.left.visible) { this.flash = 0; this.flashLight.intensity = 0; return this.updateShells(dt) }
     const leftWrist = rig.left.position
     const elbow = P.leftElbow.clone().lerp(V(-0.16, -0.32, 0.1), clamp((leftWrist.distanceTo(rig.leftBase.pos) - 0.05) * 3, 0, 1))
     solveArm(rig.leftArm, leftWrist, elbow, P.leftShoulder)
 
     // Muzzle flash + light.
     this.flash = Math.max(0, this.flash - dt)
-    rig.model.flash.visible = this.flash > 0.012
+    if (rig.model.flash) rig.model.flash.visible = this.flash > 0.012
     this.flashLight.intensity = this.flash > 0 ? 0.07 : 0
     rig.group.updateMatrixWorld(true)
     this.flashLight.position.copy(rig.model.muzzle).applyMatrix4(rig.model.root.matrixWorld)
     if (rig.model.reticle) rig.model.reticle.visible = true
 
+    this.updateShells(dt)
+    void W
+  }
+
+  updateShells(dt) {
     for (const sh of this.shells) {
       if (sh.life <= 0) continue
       sh.life -= dt
@@ -220,7 +255,6 @@ export class Viewmodel {
       sh.m.rotation.x += sh.spin.x * dt; sh.m.rotation.y += sh.spin.y * dt; sh.m.rotation.z += sh.spin.z * dt
       sh.m.visible = sh.life > 0
     }
-    void W
   }
 
   animateReload(rig, t, pos, rot) {

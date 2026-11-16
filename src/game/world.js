@@ -25,7 +25,15 @@ export const WEAPONS = [
     spread: { hip: 0.018, ads: 0.0025, move: 0.0016, air: 0.04 }, bloom: 0.009, bloomMax: 0.03, bloomRecover: 0.12,
     kick: 0.017, adsZoom: 1.2, adsSens: 0.8,
   },
+  {
+    id: 'knife', name: 'KX-3 KNIFE', caliber: 'MELEE', melee: true, mag: 0, reserve: 0, interval: 0.55, auto: true, reload: 0,
+    damage: { head: 75, body: 55, legs: 45 }, range: 2.1,
+    spread: { hip: 0, ads: 0, move: 0, air: 0 }, bloom: 0, bloomMax: 0, bloomRecover: 1,
+    kick: 0, adsZoom: 1, adsSens: 1,
+  },
 ]
+export const SLOTS = WEAPONS.length
+export const MAX_RECOIL = 0.22
 
 export const clamp = (v, a, b) => Math.max(a, Math.min(b, v))
 
@@ -37,6 +45,8 @@ export const boxes = []
 export const ramps = []
 export const spawns = []
 export const navPoints = []
+export const pickups = [] // ammo resupply crates: { id, x, y, z }
+export const PICKUP = { radius: 1.25, respawn: 25 }
 
 const flip = { n: 's', s: 'n', e: 'w', w: 'e' }
 function box(x, y, z, w, h, d, kind = 'block') {
@@ -118,6 +128,7 @@ const container = (s, x, z, along, base = 0) => ground(s * x, s * z, along === '
 const barrel = (s, x, z) => ground(s * x, s * z, 0.75, 0.75, 1.05, 'barrel')
 const spawn = (s, x, y, z) => spawns.push([s * x, y, s * z])
 const nav = (s, x, z) => navPoints.push([s * x, s * z])
+const pickup = (s, x, y, z) => pickups.push({ id: pickups.length, x: s * x, y, z: s * z })
 
 // Perimeter: tall white compound walls with the red lower band.
 for (const z of [-45, 45]) ground(0, z, 92, 2, 9, 'perimeter')
@@ -125,6 +136,7 @@ for (const x of [-45, 45]) ground(x, 0, 2, 88, 9, 'perimeter')
 
 // Center: two containers with a third bridged on top form an arch you can climb.
 ground(0, 0, 7.8, 2.5, 2.6, 'container', 2.6)
+pickup(1, 0, 0, 0) // contested resupply under the arch
 
 both(s => {
   // NW warehouse — hollow, four doorways, exterior stairs up to the roof, catwalk exit east.
@@ -182,6 +194,8 @@ both(s => {
   crate(s, 24, -16, 1.4); crate(s, 22.7, -16.3, 1.1)
   barrier(s, 38, -18, 0.7, 4)
   crate(s, 40.5, -33, 1.4); crate(s, 41.6, -31.8, 1.2); barrel(s, 39, -38.5)
+
+  pickup(s, -33, 0, -31); pickup(s, 29, 5.6, -31); pickup(s, 6, 0, -33); pickup(s, -39, 0, -10)
 
   spawn(s, -30, 0, -33); spawn(s, -42, 0, -21); spawn(s, 31, 5.6, -34)
   spawn(s, 0, 0, -31); spawn(s, -12, 0, -15.5); spawn(s, 22, 0, -6)
@@ -360,9 +374,15 @@ export function currentSpread(p) {
   return s
 }
 
+// Aim including authoritative recoil (recoil lives in the simulated state, so a modified client
+// cannot remove it: the host computes the same offsets from the same shot counter).
+export const aimYaw = p => p.yaw + (p.recoilYaw || 0)
+export const aimPitch = p => clamp(p.pitch + (p.recoil || 0), -1.5, 1.5)
 export function shotDirection(p) {
-  const f = forward(p.yaw, p.pitch)
-  const right = { x: Math.cos(p.yaw), y: 0, z: -Math.sin(p.yaw) }
+  const yaw = aimYaw(p), pitch = aimPitch(p)
+  const f = forward(yaw, pitch)
+  if (WEAPONS[p.weapon].melee) return f
+  const right = { x: Math.cos(yaw), y: 0, z: -Math.sin(yaw) }
   const up = { x: right.y * f.z - right.z * f.y, y: right.z * f.x - right.x * f.z, z: right.x * f.y - right.y * f.x }
   const spread = currentSpread(p)
   const a = hash(p.seed * 7919 + p.shots * 2) * Math.PI * 2
@@ -384,18 +404,37 @@ export function makePlayer(id, name, index = 0) {
   return {
     id, name, x: s[0], y: s[1], z: s[2], vx: 0, vy: 0, vz: 0, yaw: Math.atan2(s[0], s[2]), pitch: 0,
     ground: true, height: PLAYER.height, crouched: false, slide: 0, slideCd: 0, crouchHeld: false,
-    sprinting: false, aiming: false,
+    sprinting: false, aiming: false, jumpBuffer: 0, recoil: 0, recoilYaw: 0,
     hp: 100, armor: 50, weapon: 0, ammo: WEAPONS.map(w => w.mag), reserve: WEAPONS.map(w => w.reserve),
     reload: 0, cooldown: 0, swap: 0, bloom: 0, shots: 0, fireHeld: false, seed: (index * 977 + 13) % 100000,
     kills: 0, deaths: 0, score: 0, streak: 0, protect: 3, respawn: 0, color: index % 12, ack: 0, ping: 0,
   }
 }
 
-export function resetLoadout(p) {
+// Everything a new life must not inherit from the previous one: movement, stance, latches,
+// weapon timers, recoil and loadout. (shots/seed are kept: they only feed deterministic spread.)
+export function resetLife(p) {
   p.hp = 100; p.armor = 50; p.weapon = 0
   p.ammo = WEAPONS.map(w => w.mag); p.reserve = WEAPONS.map(w => w.reserve)
   p.reload = p.cooldown = p.swap = p.bloom = 0
-  p.vx = p.vy = p.vz = 0; p.slide = 0; p.height = PLAYER.height; p.crouched = false; p.ground = true
+  p.recoil = p.recoilYaw = 0
+  p.vx = p.vy = p.vz = 0
+  p.slide = p.slideCd = 0; p.jumpBuffer = 0
+  p.height = PLAYER.height; p.crouched = false; p.ground = true
+  p.crouchHeld = false; p.fireHeld = false; p.sprinting = false; p.aiming = false
+  p.respawn = 0
+}
+export const resetLoadout = resetLife
+
+// True if a standing player capsule fits at (x, y, z) without intersecting map geometry.
+export function capsuleClear(x, y, z, r = PLAYER.radius) {
+  if (Math.abs(x) > ARENA - r || Math.abs(z) > ARENA - r) return false
+  for (const b of nearbyBoxes(x, z, r + 0.1)) {
+    if (b.y + b.h / 2 <= y + 0.05 || b.y - b.h / 2 >= y + PLAYER.height) continue
+    if (Math.abs(x - b.x) < b.w / 2 + r && Math.abs(z - b.z) < b.d / 2 + r) return false
+  }
+  for (const rp of ramps) { const h = rampHeight(rp, x, z); if (h !== null && h > y + PLAYER.step) return false }
+  return support(x, z, r, y + PLAYER.step) >= y - 0.05 // must also be standing on something
 }
 
 // One fixed-step tick of movement + weapon state. Returns what happened so the caller can
@@ -434,8 +473,13 @@ export function simulate(p, cmd, dt = DT, frozen = false) {
   p.sprinting = !!cmd.sprint && fwd > 0 && !p.crouched && !cmd.aim && !cmd.fire && p.slide <= 0 && p.reload <= 0
   const wishSpeed = wl ? (p.crouched ? MOVE.crouch : p.sprinting ? MOVE.sprint : cmd.aim ? MOVE.aim : MOVE.walk) : 0
 
+  // A jump tap pressed shortly before landing is buffered instead of lost.
+  p.jumpBuffer = Math.max(0, (p.jumpBuffer || 0) - dt)
+  if (cmd.jump && !p.ground) p.jumpBuffer = 0.12
+  const wantJump = cmd.jump || p.jumpBuffer > 0
   if (p.ground) {
-    if (cmd.jump) {
+    if (wantJump) {
+      p.jumpBuffer = 0
       p.vy = MOVE.jump; p.ground = false; ev.jumped = true; p.slide = 0 // momentum is kept — bunny hops skip friction
     } else if (p.slide > 0) {
       friction(p, MOVE.slideFriction, dt)
@@ -456,16 +500,26 @@ export function simulate(p, cmd, dt = DT, frozen = false) {
   // Weapons
   p.cooldown = Math.max(0, p.cooldown - dt)
   p.swap = Math.max(0, p.swap - dt)
-  const slot = cmd.slot === 1 ? 1 : 0
-  if (slot !== p.weapon) { p.weapon = slot; p.swap = 0.42; p.reload = 0; ev.swapped = true }
+  const slot = Number.isInteger(cmd.slot) && cmd.slot >= 0 && cmd.slot < SLOTS ? cmd.slot : 0
+  if (slot !== p.weapon) { p.weapon = slot; p.swap = slot === 2 ? 0.25 : 0.42; p.reload = 0; ev.swapped = true }
   const W = WEAPONS[p.weapon], i = p.weapon
   p.bloom = Math.max(0, p.bloom - dt * W.bloomRecover)
+  if (p.cooldown <= 0) { const k = Math.exp(-6.5 * dt); p.recoil = (p.recoil || 0) * k; p.recoilYaw = (p.recoilYaw || 0) * k }
+  if (W.melee) {
+    p.reload = 0
+    p.aiming = false
+    const swing = cmd.fire && p.cooldown <= 0 && p.swap <= 0
+    p.fireHeld = !!cmd.fire
+    if (swing) { p.cooldown = W.interval; ev.fired = true; ev.melee = true; ev.origin = eyePosition(p); ev.dir = shotDirection(p) }
+    return ev
+  }
   if (p.reload > 0) {
     p.reload -= dt
     if (p.reload <= 0) {
       p.reload = 0
       const take = Math.min(W.mag - p.ammo[i], p.reserve[i])
       p.ammo[i] += take; p.reserve[i] -= take; ev.reloaded = true
+      p.ammo[i] = clamp(p.ammo[i], 0, W.mag); p.reserve[i] = Math.max(0, p.reserve[i])
     }
   } else if (cmd.reload && p.ammo[i] < W.mag && p.reserve[i] > 0 && p.swap <= 0) {
     p.reload = W.reload; ev.reloadStart = true
@@ -479,6 +533,9 @@ export function simulate(p, cmd, dt = DT, frozen = false) {
       p.ammo[i]--; p.cooldown = W.interval; p.shots++
       ev.fired = true; ev.origin = eyePosition(p); ev.dir = shotDirection(p)
       p.bloom = Math.min(W.bloomMax, p.bloom + W.bloom)
+      // Recoil applies after the shot it belongs to: the next bullet climbs.
+      p.recoil = Math.min(MAX_RECOIL, (p.recoil || 0) + W.kick * (p.aiming ? 0.6 : 1))
+      p.recoilYaw = clamp((p.recoilYaw || 0) + (hash(p.seed * 31 + p.shots * 7 + 3) - 0.5) * W.kick * 0.7, -MAX_RECOIL / 2, MAX_RECOIL / 2)
     } else if (p.reserve[i] > 0) { p.reload = W.reload; ev.reloadStart = true } else if (edge) ev.empty = true
   }
   return ev

@@ -141,7 +141,8 @@ export function makeSoldier(colorIndex = 0) {
   const damp = (a, b, k, dt) => T.MathUtils.damp(a, b, k, dt)
 
   function drawLabel(p) {
-    const key = p.name + '|' + Math.ceil(p.hp) + '|' + (p.protect > 0)
+    // Redraw only when something visible changes: name, health, protection, alive/connected, team.
+    const key = p.name + '|' + Math.ceil(p.hp) + '|' + (p.protect > 0) + '|' + (p.hp > 0) + '|' + (p.connected !== false) + '|' + team
     if (key === lastLabel) return
     lastLabel = key
     const x = c.getContext('2d')
@@ -150,6 +151,7 @@ export function makeSoldier(colorIndex = 0) {
     x.textAlign = 'center'
     x.lineWidth = 5; x.strokeStyle = '#10181f'; x.strokeText(p.name, 128, 26)
     x.fillStyle = '#ffffff'; x.fillText(p.name, 128, 26)
+    x.fillStyle = team; x.fillRect(46, 38, 8, 10)
     x.fillStyle = '#10181fcc'; x.fillRect(58, 38, 140, 10)
     x.fillStyle = p.protect > 0 ? '#6ee8ff' : p.hp > 50 ? '#9be35a' : p.hp > 25 ? '#ffc04a' : '#ff5a4a'
     x.fillRect(60, 40, 136 * Math.max(0, p.hp) / 100, 6)

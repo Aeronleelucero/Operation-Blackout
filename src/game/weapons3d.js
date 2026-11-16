@@ -288,6 +288,27 @@ export function buildPistol(M) {
 }
 
 // ---------------------------------------------------------------------------------------------
+// KX-3 combat knife. Origin at the handle centre, blade along -Z, edge down.
+// ---------------------------------------------------------------------------------------------
+export function buildKnife(M) {
+  const root = new T.Group()
+  const k = new Kit()
+  // Blade: clip-point profile in the (z, y) plane, thin across X.
+  k.profile(M.steel, s => {
+    s.moveTo(0.05, 0.006); s.lineTo(0.2, 0.008); s.lineTo(0.235, 0.0); s.quadraticCurveTo(0.2, -0.016, 0.15, -0.019); s.lineTo(0.05, -0.016); s.closePath()
+  }, 0.0045, 0.0008)
+  k.box(M.edge, 0, -0.016, -0.12, 0.0012, 0.004, 0.14) // honed edge bevel
+  k.box(M.metalDark, 0, -0.002, -0.11, 0.005, 0.004, 0.09) // fuller
+  // Guard, handle with grip rings, pommel.
+  k.rbox(M.metalDark, 0, -0.004, -0.046, 0.022, 0.05, 0.008, 0.002)
+  k.cylZ(M.polymer, 0, -0.004, 0.0, 0.0125, 0.09, 12, 0.0135)
+  for (let i = 0; i < 5; i++) k.cylZ(M.black, 0, -0.004, -0.03 + i * 0.015, 0.0142, 0.004, 12)
+  k.cylZ(M.metalDark, 0, -0.004, 0.05, 0.0145, 0.012, 12, 0.011)
+  k.build(root)
+  return { root, muzzle: new T.Vector3(0, 0, -0.23), port: new T.Vector3(), sight: new T.Vector3(0, 0.05, -0.1), magHome: new T.Vector3() }
+}
+
+// ---------------------------------------------------------------------------------------------
 // Gloved hand: origin at the wrist, fingers along -Z, palm facing -Y. side=+1 right, -1 left.
 // ---------------------------------------------------------------------------------------------
 export function buildHand(M, side = 1) {

@@ -94,6 +94,11 @@ body.playing, body.playing #game { cursor: none }
 #death small { font: 600 11px 'IBM Plex Mono', monospace; letter-spacing: 3px; color: var(--red) }
 #death strong { font-size: 48px; font-weight: 900; line-height: 1 }
 #death span { font: 600 12px 'IBM Plex Mono', monospace; letter-spacing: 2px; color: #d7e0e2 }
+#death em { font: 600 10px 'IBM Plex Mono', monospace; letter-spacing: 2px; color: var(--gold); font-style: normal }
+#netBanner { position: absolute; top: 16px; left: 50%; transform: translateX(-50%); padding: 8px 18px; background: #b8302ae0; border-radius: 6px; font: 600 12px 'IBM Plex Mono', monospace; letter-spacing: 2px; animation: pulse 1s infinite alternate }
+@keyframes pulse { to { opacity: .6 } }
+#netStats { position: absolute; left: 18px; top: 210px; margin: 0; padding: 8px 10px; background: #0b1014d8; border-radius: 6px; font: 500 11px/1.5 'IBM Plex Mono', monospace; text-shadow: none; color: #d8f5c0; white-space: pre }
+#retryBtn { margin: 0 0 10px }
 #spawnShield { position: absolute; left: 50%; top: calc(50% + 40px); transform: translateX(-50%); font: 600 11px 'IBM Plex Mono', monospace; letter-spacing: 3px; color: var(--cyan) }
 
 .hud-bl { position: absolute; left: 18px; bottom: 18px; width: 340px }

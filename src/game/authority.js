@@ -1,15 +1,23 @@
 // Host-authoritative match state. Runs inside a Web Worker on the hosting peer; designed so the
 // same class can later run on a dedicated server (it only consumes commands and emits snapshots).
 import {
-  DT, WEAPONS, PLAYER, makePlayer, resetLoadout, simulate, spawns, navPoints, clamp,
-  rayWorld, rayPlayers, eyePosition, forward,
+  DT, WEAPONS, PLAYER, SLOTS, makePlayer, resetLife, simulate, spawns, navPoints, pickups, PICKUP, clamp,
+  rayWorld, rayPlayers, eyePosition, forward, capsuleClear, aimYaw, aimPitch,
 } from './world.js'
+import { sanitizeName } from './protocol.js'
 
 export const MATCH_SECONDS = 300, MAX_PLAYERS = 12, KILL_LIMIT = 30, RESPAWN_SECONDS = 3, PROTECT_SECONDS = 2.5
-const MAX_REWIND = 0.35
-const BOT_NAMES = ['Viper', 'Rook', 'Ghost', 'Echo', 'Flint', 'Talon', 'Kestrel', 'Onyx', 'Drift', 'Mako', 'Sable']
+export const MAX_REWIND = 0.45         // hard cap on lag-compensation rewind (s) — supports ~200 ms RTT at max interp
+export const INTERP_DELAY = 0.1        // base delay at which clients render remote players (s)
+export const INTERP_MAX = 0.2          // the client's adaptive delay never exceeds this
+export const SPAWN_OCCUPIED = 1.6      // a living player this close makes a spawn unusable (m)
+// Input credit: one command per tick accrues; up to 1 s of owed commands may catch up after a
+// hiccup (max 8 per tick), so long-run rate can never exceed real time (no speed hacks).
+const QUEUE_LIMIT = 40, BUDGET_CAP = 60, MAX_CMDS_PER_TICK = 8
 
 const r3 = v => Math.round(v * 1000) / 1000
+const randomId = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4)
+const SPAWN_CLEAR = spawns.map(s => capsuleClear(s[0], s[1], s[2]))
 
 export function sanitizeCommand(raw, last) {
   if (!raw || typeof raw !== 'object') return null
@@ -19,13 +27,14 @@ export function sanitizeCommand(raw, last) {
   for (const k of ['w', 's', 'a', 'd', 'sprint', 'crouch', 'jump', 'fire', 'aim', 'reload']) cmd[k] = raw[k] === true
   cmd.yaw = Number.isFinite(raw.yaw) ? raw.yaw % (Math.PI * 2) : undefined
   cmd.pitch = Number.isFinite(raw.pitch) ? clamp(raw.pitch, -1.5, 1.5) : undefined
-  cmd.slot = raw.slot === 1 ? 1 : 0
+  cmd.slot = Number.isInteger(raw.slot) && raw.slot >= 0 && raw.slot < SLOTS ? raw.slot : 0
   cmd.viewTime = Number.isFinite(raw.viewTime) ? raw.viewTime : undefined
   return cmd
 }
 
 export class Authority {
   constructor() {
+    this.sessionId = randomId()   // distinguishes rooms/hosts even when round numbers match
     this.players = new Map()
     this.phase = 'lobby'
     this.timer = MATCH_SECONDS
@@ -36,6 +45,8 @@ export class Authority {
     this.round = 0
     this.history = []
     this.colorCursor = 0
+    this.spawnUsed = spawns.map(() => -100)
+    this.pickupState = pickups.map(() => ({ ready: true, t: 0 }))
   }
 
   event(type, data = {}) {
@@ -45,15 +56,18 @@ export class Authority {
   }
 
   add(id, name, bot = false) {
-    if (this.players.has(id)) return this.players.get(id)
+    if (this.players.has(id)) { this.setConnected(id, true); return this.players.get(id) }
     if (this.players.size >= MAX_PLAYERS) return null
-    const p = makePlayer(id, String(name || 'Operative').trim().slice(0, 18) || 'Operative', this.colorCursor++)
+    const p = makePlayer(id, sanitizeName(name), this.colorCursor++)
     p.bot = bot
     p.queue = []
     p.budget = 4
+    p.rtt = 0
+    p.connected = true
     if (bot) p.ai = { target: null, wander: null, seen: 0, strafe: 1, strafeT: 0, lastPos: [p.x, p.z], stuckT: 0, losT: 0, visible: false, skill: 0.55 + Math.random() * 0.3 }
     this.players.set(id, p)
-    if (this.phase === 'playing' || this.phase === 'countdown') this.respawn(p, false)
+    this.place(p, this.chooseSpawn(p))
+    if (this.phase === 'playing' || this.phase === 'countdown') p.protect = PROTECT_SECONDS
     this.event('join', { id, name: p.name })
     return p
   }
@@ -64,24 +78,88 @@ export class Authority {
     this.players.delete(id)
   }
 
-  // Commands from a client (or the host's own input). Out-of-order / duplicate seqs are dropped.
-  queue(id, cmds, ping) {
+  // Reconnect grace: a dropped player stays in the match (frozen, untargetable) until removed.
+  setConnected(id, connected) {
     const p = this.players.get(id)
-    if (!p || p.bot || !Array.isArray(cmds)) return
-    if (Number.isFinite(ping)) p.ping = clamp(Math.round(ping), 0, 999)
-    for (const raw of cmds.slice(0, 20)) {
-      const last = p.queue.length ? p.queue[p.queue.length - 1].seq : p.ack
-      const cmd = sanitizeCommand(raw, last)
-      if (cmd) p.queue.push(cmd)
-    }
-    if (p.queue.length > 40) p.queue.splice(0, p.queue.length - 40)
+    if (!p || p.connected === connected) return
+    p.connected = connected
+    p.queue.length = 0
+    p.vx = p.vz = 0
+    this.event(connected ? 'reconnect' : 'dropped', { id, name: p.name })
   }
 
-  // Back-compat: a single latest input (older clients / tests).
+  setRtt(id, ms) {
+    const p = this.players.get(id)
+    if (p && Number.isFinite(ms)) p.rtt = clamp(ms, 0, 1000)
+  }
+
+  // Commands from a client (or the host's own input). Out-of-order / duplicate seqs are dropped,
+  // so redundant retransmissions are processed exactly once.
+  queue(id, cmds, ping) {
+    const p = this.players.get(id)
+    if (!p || p.bot || !Array.isArray(cmds)) return 0
+    if (Number.isFinite(ping)) p.ping = clamp(Math.round(ping), 0, 999)
+    let accepted = 0
+    for (const raw of cmds.slice(0, QUEUE_LIMIT)) {
+      const last = p.queue.length ? p.queue[p.queue.length - 1].seq : p.ack
+      const cmd = sanitizeCommand(raw, last)
+      if (cmd) { p.queue.push(cmd); accepted++ }
+    }
+    if (p.queue.length > QUEUE_LIMIT) p.queue.splice(0, p.queue.length - QUEUE_LIMIT)
+    return accepted
+  }
+
   input(id, raw) {
     const p = this.players.get(id)
     if (!p) return
     this.queue(id, [{ ...raw, seq: (p.queue.length ? p.queue[p.queue.length - 1].seq : p.ack) + 1 }])
+  }
+
+  // ------------------------------------------------------------------------------------ spawning
+  // Scores every configured spawn: must be geometrically clear and not occupied; prefers distance
+  // from living players, spawns no enemy can currently see, and spawns not used a moment ago.
+  // Falls back to a ring search around the least-contested spawn when every spawn is taken.
+  chooseSpawn(p, occupants = null) {
+    if (!occupants) occupants = [...this.players.values()].filter(q => q !== p && q.hp > 0 && q.connected !== false && q.placed !== false)
+    let best = -1, bestScore = -Infinity, fallback = 0, fallbackDist = -1
+    spawns.forEach((s, i) => {
+      if (!SPAWN_CLEAR[i]) return
+      let nearest = 1000
+      for (const q of occupants) nearest = Math.min(nearest, Math.hypot(s[0] - q.x, s[1] - q.y, s[2] - q.z))
+      if (nearest > fallbackDist) { fallbackDist = nearest; fallback = i }
+      if (nearest < SPAWN_OCCUPIED) return
+      let score = Math.min(nearest, 40)
+      const head = { x: s[0], y: s[1] + 1.5, z: s[2] }
+      for (const q of occupants) {
+        const eye = { x: q.x, y: q.y + (q.height || PLAYER.height) - PLAYER.eye, z: q.z }
+        const dx = head.x - eye.x, dy = head.y - eye.y, dz = head.z - eye.z, d = Math.hypot(dx, dy, dz)
+        if (d > 55 || d < 0.01) continue
+        if (rayWorld(eye, { x: dx / d, y: dy / d, z: dz / d }, d).t >= d - 0.3) score -= 18
+      }
+      if (this.time - this.spawnUsed[i] < 4) score -= 10
+      score += Math.random() * 3
+      if (score > bestScore) { bestScore = score; best = i }
+    })
+    if (best >= 0) {
+      const s = spawns[best]
+      this.spawnUsed[best] = this.time
+      return { x: s[0], y: s[1], z: s[2], yaw: Math.atan2(s[0], s[2]) }
+    }
+    const base = spawns[fallback]
+    for (const r of [1.8, 2.6, 3.4, 4.5, 6]) {
+      for (let k = 0; k < 12; k++) {
+        const a = (k / 12) * Math.PI * 2, x = base[0] + Math.cos(a) * r, z = base[2] + Math.sin(a) * r
+        if (!capsuleClear(x, base[1], z)) continue
+        if (occupants.some(q => Math.hypot(x - q.x, base[1] - q.y, z - q.z) < SPAWN_OCCUPIED)) continue
+        return { x, y: base[1], z, yaw: Math.atan2(x, z) }
+      }
+    }
+    return { x: base[0], y: base[1], z: base[2], yaw: Math.atan2(base[0], base[2]) }
+  }
+
+  place(p, s) {
+    resetLife(p)
+    Object.assign(p, { x: s.x, y: s.y, z: s.z, yaw: s.yaw, pitch: 0 })
   }
 
   start() {
@@ -90,39 +168,44 @@ export class Authority {
     this.countdown = 3
     this.timer = MATCH_SECONDS
     this.round++
-    let i = 0
+    this.spawnUsed.fill(-100)
+    this.pickupState.forEach(s => { s.ready = true; s.t = 0 })
+    const placed = []
     for (const p of this.players.values()) {
-      const s = spawns[i++ % spawns.length]
-      Object.assign(p, { x: s[0], y: s[1], z: s[2], yaw: Math.atan2(s[0], s[2]), pitch: 0, kills: 0, deaths: 0, score: 0, streak: 0, respawn: 0, protect: 3 })
-      resetLoadout(p)
+      Object.assign(p, { kills: 0, deaths: 0, score: 0, streak: 0, protect: 3 })
+      this.place(p, this.chooseSpawn(p, placed))
+      placed.push(p)
     }
     this.history.length = 0
     this.event('start', { round: this.round })
   }
 
-  pickSpawn(p) {
-    let best = spawns[0], bestScore = -Infinity
-    for (const s of spawns) {
-      let nearest = 1000
-      for (const q of this.players.values()) if (q !== p && q.hp > 0) nearest = Math.min(nearest, Math.hypot(s[0] - q.x, s[1] - q.y, s[2] - q.z))
-      const score = nearest + Math.random() * 6
-      if (score > bestScore) { bestScore = score; best = s }
-    }
-    return best
+  returnToLobby() {
+    this.phase = 'lobby'
+    this.countdown = 0
+    for (const p of this.players.values()) { p.queue.length = 0; if (p.hp <= 0) this.place(p, this.chooseSpawn(p)) }
+    this.event('lobby', { round: this.round })
   }
 
   respawn(p, announce = true) {
-    const s = this.pickSpawn(p)
-    Object.assign(p, { x: s[0], y: s[1], z: s[2], yaw: Math.atan2(s[0], s[2]), pitch: 0, protect: PROTECT_SECONDS, respawn: 0 })
-    resetLoadout(p)
+    p.placed = false
+    const s = this.chooseSpawn(p)
+    p.placed = true
+    this.place(p, s)
+    p.protect = PROTECT_SECONDS
     if (announce) this.event('respawn', { id: p.id, x: r3(p.x), y: r3(p.y), z: r3(p.z) })
   }
 
-  // Position of q as the shooter saw it (interpolated history at the shooter's view time).
-  rewind(q, viewTime) {
+  // ------------------------------------------------------------------------------------ combat
+  // How far back a shooter's view time may rewind. A client sees others (down-latency + interp)
+  // behind host time and its shot arrives up-latency later, so the legitimate rewind is the
+  // host-measured RTT + interpolation delay (+ jitter margin), never more than MAX_REWIND.
+  rewindWindow(p) { return clamp((p.rtt || 0) / 1000 + INTERP_MAX + 0.05, 0.05, MAX_REWIND) }
+
+  rewind(q, viewTime, window = MAX_REWIND) {
     const now = { x: q.x, y: q.y, z: q.z, height: q.height, id: q.id, ref: q }
     if (!Number.isFinite(viewTime) || !this.history.length) return now
-    const t = clamp(viewTime, this.time - MAX_REWIND, this.time)
+    const t = clamp(viewTime, this.time - window, this.time)
     const h = this.history
     for (let i = h.length - 1; i > 0; i--) {
       const a = h[i - 1], b = h[i]
@@ -136,13 +219,17 @@ export class Authority {
     return now
   }
 
+  targets(p, viewTime) {
+    const w = this.rewindWindow(p), poses = []
+    for (const q of this.players.values()) if (q !== p && q.hp > 0 && q.connected !== false) poses.push(this.rewind(q, viewTime, w))
+    return poses
+  }
+
   resolveShot(p, ev, viewTime) {
     p.protect = 0
     const W = WEAPONS[p.weapon]
     const wall = rayWorld(ev.origin, ev.dir, W.range)
-    const poses = []
-    for (const q of this.players.values()) if (q !== p && q.hp > 0) poses.push(this.rewind(q, viewTime))
-    const hit = rayPlayers(ev.origin, ev.dir, wall.t, poses)
+    const hit = rayPlayers(ev.origin, ev.dir, wall.t, this.targets(p, viewTime))
     const t = hit.target ? hit.t : wall.t
     const point = { x: r3(ev.origin.x + ev.dir.x * t), y: r3(ev.origin.y + ev.dir.y * t), z: r3(ev.origin.z + ev.dir.z * t) }
     const target = hit.target?.ref
@@ -151,8 +238,24 @@ export class Authority {
       id: p.id, w: p.weapon, o: { x: r3(ev.origin.x), y: r3(ev.origin.y), z: r3(ev.origin.z) }, point,
       n: !target && wall.normal ? wall.normal : null, hit: target && !blocked ? target.id : null, part: target ? hit.part : null,
     })
-    if (!target || blocked) return
-    this.damage(target, p, W.damage[hit.part], hit.part)
+    if (target && !blocked) this.damage(target, p, W.damage[hit.part], hit.part)
+  }
+
+  // Knife: a short fan of rays so a swing that is slightly off-centre still connects.
+  resolveMelee(p, ev, viewTime) {
+    p.protect = 0
+    const W = WEAPONS[2], poses = this.targets(p, viewTime)
+    let best = null
+    for (const [dy, dp] of [[0, 0], [0.16, 0], [-0.16, 0], [0, -0.2], [0, 0.14]]) {
+      const dir = forward(aimYaw(p) + dy, aimPitch(p) + dp)
+      const wall = rayWorld(ev.origin, dir, W.range)
+      const hit = rayPlayers(ev.origin, dir, wall.t, poses)
+      if (hit.target && (!best || hit.t < best.t)) best = hit
+    }
+    const target = best?.target?.ref
+    const blocked = target && target.protect > 0
+    this.event('melee', { id: p.id, hit: target && !blocked ? target.id : null, part: best?.part || null })
+    if (target && !blocked) this.damage(target, p, W.damage[best.part], best.part)
   }
 
   damage(target, attacker, amount, part) {
@@ -194,10 +297,27 @@ export class Authority {
     }
     if (p.hp <= 0) return
     const ev = simulate(p, cmd, DT)
-    if (ev.fired) this.resolveShot(p, ev, cmd.viewTime)
+    if (ev.fired) ev.melee ? this.resolveMelee(p, ev, cmd.viewTime) : this.resolveShot(p, ev, cmd.viewTime)
     if (ev.reloadStart) this.event('reload', { id: p.id, w: p.weapon })
-    if (ev.jumped) p.jumps = (p.jumps || 0) + 1
     if (p.y < -12) this.damage(p, null, 999, 'body')
+  }
+
+  updatePickups(dt) {
+    pickups.forEach((pk, i) => {
+      const st = this.pickupState[i]
+      if (!st.ready) { st.t -= dt; if (st.t <= 0) st.ready = true; return }
+      for (const p of this.players.values()) {
+        if (p.hp <= 0 || p.connected === false) continue
+        if (Math.hypot(p.x - pk.x, p.z - pk.z) > PICKUP.radius || Math.abs(p.y - pk.y) > 1.6) continue
+        const needs = WEAPONS.some((w, k) => !w.melee && (p.reserve[k] < w.reserve || p.ammo[k] < w.mag))
+        if (!needs) continue
+        WEAPONS.forEach((w, k) => { if (!w.melee) p.reserve[k] = Math.max(p.reserve[k], w.reserve) })
+        st.ready = false
+        st.t = PICKUP.respawn
+        this.event('pickup', { id: p.id, pickup: i })
+        break
+      }
+    })
   }
 
   tick(dt = DT) {
@@ -214,13 +334,14 @@ export class Authority {
       if (p.bot) {
         if (this.phase === 'playing' && p.hp > 0) this.apply(p, p.bot === 'frozen' ? { yaw: p.yaw, pitch: p.pitch } : this.botCommand(p, dt))
       } else {
-        p.budget = Math.min(p.budget + 1, 10)
-        while (p.queue.length && p.budget >= 1) { p.budget--; this.apply(p, p.queue.shift()) }
+        p.budget = Math.min(p.budget + 1, BUDGET_CAP)
+        for (let n = 0; n < MAX_CMDS_PER_TICK && p.queue.length && p.budget >= 1; n++) { p.budget--; this.apply(p, p.queue.shift()) }
       }
       if (this.phase !== 'playing') continue
       p.protect = Math.max(0, p.protect - dt)
       if (p.hp <= 0) { p.respawn -= dt; if (p.respawn <= 0) this.respawn(p) }
     }
+    if (this.phase === 'playing') this.updatePickups(dt)
     const pos = new Map()
     for (const p of this.players.values()) pos.set(p.id, [p.x, p.y, p.z, p.height])
     this.history.push({ t: this.time, pos })
@@ -269,9 +390,12 @@ export class Authority {
       cmd.w = dist > 16; cmd.s = dist < 6
       cmd.jump = Math.random() < 0.006
       cmd.crouch = dist > 20 && ai.skill > 0.7 && Math.sin(this.time + p.seed) > 0.6
-      cmd.aim = dist > 14
+      // Out of rifle ammo → pistol → knife (rush in and swing).
+      cmd.slot = p.ammo[0] + p.reserve[0] > 0 ? 0 : p.ammo[1] + p.reserve[1] > 0 ? 1 : 2
+      cmd.aim = dist > 14 && cmd.slot !== 2
       cmd.fire = ai.seen > 0.45 - ai.skill * 0.2 && error < 0.08 && Math.sin(this.time * 2.1 + p.seed) > -0.55
-      cmd.reload = p.ammo[0] === 0
+      if (cmd.slot === 2) { cmd.w = true; cmd.s = false; cmd.sprint = dist > 4; cmd.fire = dist < 2 && error < 0.3 }
+      cmd.reload = cmd.slot !== 2 && p.ammo[cmd.slot] === 0
       return cmd
     }
     // Wander between navigation points.
@@ -288,26 +412,32 @@ export class Authority {
       if (Math.hypot(p.x - ai.lastPos[0], p.z - ai.lastPos[1]) < 1) { ai.wander = navPoints[Math.floor(Math.random() * navPoints.length)]; cmd.jump = true }
       ai.stuckT = 0; ai.lastPos = [p.x, p.z]
     }
-    cmd.reload = p.ammo[0] < 15 && p.reserve[0] > 0
+    cmd.slot = p.ammo[0] + p.reserve[0] > 0 ? 0 : p.ammo[1] + p.reserve[1] > 0 ? 1 : 2
+    cmd.reload = cmd.slot === 0 && p.ammo[0] < 15 && p.reserve[0] > 0
     return cmd
   }
 
+  // Full-precision state: the wire encoder rounds other players, but each client receives its own
+  // entry exactly so prediction replays are bit-identical to the host simulation.
   snapshot() {
     const players = []
     for (const p of this.players.values()) {
       players.push({
         id: p.id, name: p.name, bot: !!p.bot, color: p.color,
-        x: r3(p.x), y: r3(p.y), z: r3(p.z), vx: r3(p.vx), vy: r3(p.vy), vz: r3(p.vz), yaw: r3(p.yaw), pitch: r3(p.pitch),
-        ground: p.ground, height: r3(p.height), crouched: p.crouched, slide: r3(p.slide), slideCd: r3(p.slideCd), crouchHeld: p.crouchHeld,
-        sprinting: p.sprinting, aiming: p.aiming,
-        hp: Math.ceil(p.hp * 10) / 10, armor: Math.round(p.armor * 10) / 10, weapon: p.weapon, ammo: p.ammo, reserve: p.reserve,
-        reload: r3(p.reload), cooldown: r3(p.cooldown), swap: r3(p.swap), bloom: r3(p.bloom), shots: p.shots, fireHeld: p.fireHeld, seed: p.seed,
-        kills: p.kills, deaths: p.deaths, score: p.score, streak: p.streak, protect: r3(p.protect), respawn: r3(p.respawn), ack: p.ack, ping: p.ping,
+        x: p.x, y: p.y, z: p.z, vx: p.vx, vy: p.vy, vz: p.vz, yaw: p.yaw, pitch: p.pitch,
+        ground: p.ground, height: p.height, crouched: p.crouched, slide: p.slide, slideCd: p.slideCd, crouchHeld: p.crouchHeld,
+        sprinting: p.sprinting, aiming: p.aiming, jumpBuffer: p.jumpBuffer || 0, recoil: p.recoil || 0, recoilYaw: p.recoilYaw || 0,
+        hp: p.hp, armor: p.armor, weapon: p.weapon, ammo: [...p.ammo], reserve: [...p.reserve],
+        reload: p.reload, cooldown: p.cooldown, swap: p.swap, bloom: p.bloom, shots: p.shots, fireHeld: p.fireHeld, seed: p.seed,
+        kills: p.kills, deaths: p.deaths, score: p.score, streak: p.streak, protect: p.protect, respawn: p.respawn, ack: p.ack,
+        ping: p.bot ? 0 : Math.round(p.rtt || p.ping || 0), connected: p.connected !== false,
       })
     }
+    let pk = 0
+    this.pickupState.forEach((s, i) => { if (s.ready) pk |= 1 << i })
     return {
-      t: r3(this.time), phase: this.phase, timer: r3(this.timer), countdown: r3(this.countdown), round: this.round,
-      limit: KILL_LIMIT, players, events: this.events.splice(0),
+      sid: this.sessionId, t: r3(this.time), phase: this.phase, timer: r3(this.timer), countdown: r3(this.countdown), round: this.round,
+      limit: KILL_LIMIT, pickups: pk, players, events: this.events.splice(0),
     }
   }
 }
